@@ -1,0 +1,23 @@
+---
+title: "ROAD ACCIDENT ANALYSIS"
+subtitle: "COMPREHENSIVE DEEP DIVE ON ROAD ACCIDENTS IN THE UK (2022)"
+author: "Alexander Junod, Camille Leroy, Aurelien Urfer"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+format:
+  html: 
+    css: custom-styles.scss
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    toc-float:
+      collapsed: false
+      smooth-scroll: true
+    search: true
+editor: visual
+---
+
+```{r child = c('intro.qmd', 'data.qmd', 'eda.qmd', 'analysis.qmd', 'concl.qmd')}
+```

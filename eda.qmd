@@ -1,0 +1,705 @@
+# Exploratory data analysis
+
+```{r, echo = FALSE, message = FALSE}
+source(here::here("scripts/setup.R")) 
+```
+
+-   Mapping out the underlying structure
+-   Identifying the most important variables
+-   Univariate visualizations
+-   Multivariate visualizations
+-   Summary tables
+
+Importing our data sets
+
+```{r dataset importation, echo=FALSE}
+q1_data_path <- here::here("data", "q1_clean.rds")
+q1_clean <- readRDS(q1_data_path)
+q2_data_path <- here::here("data", "q2_clean.rds")
+q2_clean <- readRDS(q2_data_path)
+q3a_data_path <- here::here("data", "q3a_clean.rds")
+q3a_clean <- readRDS(q3a_data_path)
+```
+
+For the sake of uniformity and comprehensibility, it was important to keep the structure in relation to our research questions, to explore the data consistently. We therefore decided to explore the data according to our questions and the variables that were linked to them.
+
+
+## Research Question 1:
+
+### Mapping Points of 
+
+Firstly, we wanted to map all accidents in the UK. To do this, we took the GPS coordinates of all accidents and plotted them on a map. This didn't necessarily convince us, as we could see that the sheer number of accidents meant that we couldn't really see what was going on.
+
+
+```{r, cache=TRUE}
+# Transform data into an sf object
+accident_data_sf <- st_as_sf(q1_clean, coords = c("longitude", "latitude"), crs = 4326)
+
+# Get UK shapefile
+uk <- ne_countries(scale = "medium", country = "united kingdom", returnclass = "sf")
+
+# Define the geographic boundaries for zooming in on the UK
+xlims <- c(-10, 2)  # Longitude limits
+ylims <- c(49, 57)  # Latitude limits
+
+# Basic mapping with ggplot2
+base_plot <- ggplot() +
+  geom_sf(data = uk, fill = "#BBBBBB", color = "#4C4E4D") +
+  geom_sf(data = accident_data_sf, color = "#D05353", size = 0.5) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  coord_sf(xlim = xlims, ylim = ylims, expand = FALSE)  # Set coordinate limits
+
+# Enhance map with ggspatial: Add north arrow and scale bar
+enhanced_plot <- base_plot +
+  annotation_scale(location = "bl", width_hint = 0.5) +
+  annotation_north_arrow(location = "br", which_north = "true", pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"))
+
+# Resize and save the plot
+ggsave("UK_Accidents_Map.png", plot = enhanced_plot, width = 10, height = 8)
+
+# Print the enhanced plot
+print(enhanced_plot)
+```
+
+
+### Table of Accidents per Region
+
+The above graph, does not show much, as there is a large amount of points. Our dataset also provides us with the unique LSOA's in which the accident occurred. A LSOA or Lower Layer Super Output Area is a small, statistically consistent, geographically bounded area created by the UK Office for National Statistics, Despite LSOA's providing an both a high resolution of data and statistical consistency, due to the sheer value of LSOA's within our dataset (`r n_distinct(q1_clean$lsoa_of_accident_location)`), we will convert this data into less granular. We will be using UTLA or Upper Tier Local Authorties, which are larger than LSOA's and are good for broad regional analysis and planning. IF we deem that the analysis is not granular enough, we can move back to LSOA's.
+
+We will need to use a new data set in order to aggregate our data at a UTLA level. We will be looking up the corresponding UTLA for each of our LSOA's.
+
+```{r}
+utla_data_path <- here::here("data","Lower_Layer_Super_Output_Area_(2011)_to_Upper_Tier_Local_Authorities_(2017)_Lookup_in_England_and_Wales.csv")
+utla <- read.csv(utla_data_path)
+```
+
+```{r}
+# Left join q1_clean with the UTLA dataset based on LSOA codes
+q1_clean <- left_join(
+  q1_clean,
+  utla %>% select(LSOA11CD, LSOA11NM, UTLA17CD, UTLA17NM),
+  by = c("lsoa_of_accident_location" = "LSOA11CD")
+)
+```
+
+```{r eval=FALSE}
+# Create a list of LSOA codes from your dataset
+your_dataset_lsoa <- q1_clean$lsoa_of_accident_location
+
+# Create a list of LSOA codes from the UTLA dataset
+utla_lsoa <- utla$LSOA11CD
+
+# Find LSOA codes that were not merged
+unmerged_lsoa <- setdiff(your_dataset_lsoa, utla_lsoa)
+
+# Check if there are any unmerged LSOA codes
+if (length(unmerged_lsoa) > 0) {
+  cat("LSOA codes that didn't get merged:")
+  cat("\n")
+  cat(unmerged_lsoa, sep = "\n")
+} else {
+  cat("All LSOA codes from your dataset got merged.")
+}
+```
+
+```{r}
+accidents_per_utla <- q1_clean %>%
+  group_by(UTLA17NM) %>%
+  summarize(
+    "Total Accidents" = n(),
+    "Total Slight" = sum(num_slight),
+    "Total Serious" = sum(num_serious),
+    "Total Fatal" = sum(num_fatal)
+  ) %>%
+  rename("UTLA Name" = UTLA17NM)  # Rename the first column
+
+# Print the table using knitr's kable function
+datatable(accidents_per_utla, caption = "Num of Accidents per Accident Type and UTLA", 
+          class = 'cell-border stripe',
+          options = list(pageLength = 5, order = list(list(2, 1))))
+```
+
+### Interactive Map of Regions and Accidents
+
+*Geolink to JSON: https://data-communities.opendata.arcgis.com/datasets/f9205b260a7b4e999455b06d41a67e39/explore* 
+
+To visualize this, we decided to implement an interactive map of the UK, showing the number and severity of accidents by region.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Here we need to import our GeoJSON file with the bounderies of our UTLA's in the UK
+geojson_data_path <- here::here("data", "Local_Authority_(Upper_Tier)_IMD_2019_(OSGB1936).geojson")
+utla_boundaries <- st_read(geojson_data_path)
+```
+
+
+```{r, eval=FALSE, include=FALSE}
+# Assuming q1_clean and utla_boundaries are already loaded
+
+# Filter out rows with NA coordinates and then convert to sf object
+q1_clean_sf <- q1_clean %>%
+  filter(!is.na(longitude) & !is.na(latitude)) %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+
+# Perform the spatial join
+accidents_joined <- st_join(q1_clean_sf, utla_boundaries, left = FALSE, join = st_intersects)
+
+# Aggregate accidents by UTLA
+accidents_by_utla <- accidents_joined %>%
+  group_by(ctyua19cd) %>%
+  summarise(accident_count = n(), .groups = "drop")
+
+# Convert UTLA boundaries to a regular data frame
+utla_boundaries_df <- as.data.frame(utla_boundaries)
+
+# Perform the join
+utla_boundaries_with_accidents_df <- utla_boundaries_df %>%
+  left_join(accidents_by_utla, by = c("ctyua19cd" = "ctyua19cd"))
+
+# Keep only the necessary geometry column and rename it
+utla_boundaries_with_accidents_df <- utla_boundaries_with_accidents_df %>%
+  select(-geometry.y) %>%
+  rename(geometry = geometry.x)
+
+# Convert the dataframe to an sf object
+utla_boundaries_with_accidents <- st_as_sf(utla_boundaries_with_accidents_df, crs = st_crs(utla_boundaries))
+
+my_palette <- c("#F1F3F2", "#BBBBBB", "#4C4E4D", "#FFEB00", "#D05353")
+
+# Create a color palette
+pal <- colorNumeric(palette = my_palette, domain = utla_boundaries_with_accidents$accident_count)
+
+# Create a leaflet map
+leaflet_map <- leaflet(utla_boundaries_with_accidents) %>%
+  addProviderTiles(providers$OpenStreetMap) %>%
+  addPolygons(fillColor = ~pal(accident_count),
+              fillOpacity = 0.7, 
+              color = "#444444", 
+              weight = 1,
+              popup = ~paste(ctyua19nm, "Accidents:", accident_count)) %>%
+  #addCircles(data = accidents_joined, 
+            # radius = 5, 
+            # color = "#FF0000", 
+            # weight = 1, 
+            # opacity = 1, 
+            # fillOpacity = 0.8) %>%
+  addLegend("bottomright", 
+            pal = pal, 
+            values = ~accident_count, 
+            title = "Number of Accidents",
+            opacity = 1)
+
+# Render the leaflet map
+leaflet_map
+```
+
+
+
+## Research Question 2:
+
+This is the most challenging part of data exploration. Many factors need to be considered, including the day of the week, the month of the year and the time of day.
+
+##### Day of Week
+
+Firstly, for each day of the week, we have drawn up a table showing the number of accidents per day. We can observe a median number of xxx accidents per day.
+
+### Table w/ count of accident by D.O.W (w median)
+
+```{r}
+# Summarize accidents by day of the week
+accidents_summary <- q2_clean %>%
+  group_by(day_name) %>%
+  summarise(Number_of_Accidents = n()) %>%
+  ungroup()
+
+# Calculate average accidents per day
+average_accidents_day <- mean(accidents_summary$Number_of_Accidents)
+
+datatable(accidents_summary, 
+          rownames = FALSE, 
+          caption = "Count of Accidents by D.O.W", 
+          class = 'cell-border stripe',
+          options = list(
+            paging = FALSE,     # Disable pagination
+            searching = FALSE,  # Disable search box
+            ordering = FALSE,   # Disable column sorting
+            info = FALSE        # Hide the 'Showing 1 to n of n entries' info
+          ))
+```
+
+Then, by day, we dissociated the severity of accidents to see if one day of the week or another would be more prone to fatal accidents. 
+
+### Graph: Accidents by D.O.W per Severity
+
+```{r echo=FALSE, results='hide'}
+# here we are creating the count per day and severity
+accidents_by_day_severity <- q2_clean %>%
+  group_by(day_name, accident_severity_chr) %>%
+  tally(name = "count")
+
+# Calculate the total accidents per day
+total_accidents_by_day <- accidents_by_day_severity %>%
+  group_by(day_name) %>%
+  summarise(total_count = sum(count))
+
+# Join to get the total accidents per day alongside the count per severity
+accidents_by_day_severity <- accidents_by_day_severity %>%
+  left_join(total_accidents_by_day, by = "day_name")
+
+# Calculate the proportion of each severity type per day
+accidents_by_day_severity <- accidents_by_day_severity %>%
+  mutate(proportion = count / total_count)
+
+# Create the pivot table
+severity_proportions_pivot_day <- accidents_by_day_severity %>%
+  select(day_name, accident_severity_chr, proportion) %>%
+  pivot_wider(names_from = accident_severity_chr, values_from = proportion)
+
+# View the pivot table
+severity_proportions_pivot_day
+```
+
+```{r}
+ggplot(q2_clean) +
+  aes(x = day_name, fill = accident_severity_chr) +
+  geom_bar() +
+  geom_hline(yintercept = average_accidents_day, linetype = "dashed", color = "#FE4A49", size = 1) +
+  scale_fill_manual(
+    values = c(Fatal = "#FFEB00",
+    Serious = "#BBBBBB",
+    Slight = "#4C4E4D"),
+    name = "Severity of Accident"
+  ) +
+  labs(
+    x = "Day of Week",
+    y = "Number of Accidents",
+    title = "Accidents by DOW per Severity",
+    subtitle = paste("Red dashed line represents the average:", round(average_accidents_day, 2))
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom", panel.background = element_rect(fill = "#f1f3f2", colour = "#f1f3f2"))
+
+```
+We can see that, although Saturday is a day with more accidents, there doesn't seem to be any difference in severity depending on the day of the week.
+To get a better idea of this, we've removed the minor accidents that make up a large proportion of daily accidents. In addition, we have adjusted this to a proportion to avoid biases linked to days like Saturday (which have more accidents).
+
+### Graph: Proportion of Accidents by D.O.W per Severity
+
+```{r}
+ggplot(accidents_by_day_severity, aes(x = day_name, y = proportion, fill = accident_severity_chr)) +
+  geom_bar(stat = "identity", position = "fill") +
+  geom_text(aes(label = scales::percent(proportion, accuracy = 0.1)), 
+            position = position_fill(vjust = 0.5), 
+            color = "black", 
+            size = 3) +
+  scale_fill_manual(
+    values = c(Fatal = "#FFEB00",
+    Serious = "#BBBBBB",
+    Slight = "#4C4E4D"),
+    name = "Severity of Accident"
+  ) +
+  labs(
+    x = "Day of Week",
+    y = "Proportion of Accidents",
+    title = "Proportion of Accidents by DOW per Severity"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom", panel.background = element_rect(fill = "#f1f3f2", colour = "#f1f3f2"))
+```
+
+
+We note that Monday is the day with the most serious accidents (xxx%), but that the percentage of serious accidents during the day varies very little.
+
+
+
+###### Month of year
+
+Secondly, for each month of the year, we have drawn up a table showing the number of accidents per month. We can observe a median number of xxx accidents per month and an average of xxx accidents per month.
+
+### Table w/ count of accident by M.O.Y (w median)
+
+```{r}
+# Calculate the number of accidents per month
+accidents_by_month <- q2_clean %>%
+  group_by(month_name) %>%
+  summarise(Number_of_Accidents = n()) %>%
+  ungroup()
+
+# Calculate average accidents per month
+average_accidents_month <- mean(accidents_by_month$Number_of_Accidents)
+
+# Create a table using knitr
+knitr::kable(accidents_by_month, 
+             col.names = c("Month of the Year", "Number of Accidents"), 
+             caption = paste("Accidents by Month of the Year. Average Accidents per Month:", round(average_accidents_month, 2)))
+
+```
+
+We don't see much difference in terms of the number of accidents per month. This shows that road accidents remain stable throughout the year.  
+
+Then, by month, we dissociated the severity of accidents to see if one month of the year or another would be more prone to fatal accidents.
+
+### Graph of Accidents by M.O.Y per Severity (w/average)
+
+```{r}
+average_accidents_month <- mean(table(q2_clean$month_name))
+ggplot(q2_clean) +
+  aes(x = month_name, fill = accident_severity_chr) +
+  geom_bar() +
+  geom_hline(yintercept = average_accidents_month, linetype = "dashed", color = "#FE4A49", size = 1) +
+  scale_fill_manual(
+    values = c(Fatal = "#FFEB00",
+               Serious = "#BBBBBB",
+               Slight = "#4C4E4D"),
+    name = "Severity of Accident"
+  ) +
+  labs(
+    x = "Month of Year",
+    y = "Number of Accidents",
+    title = "Accidents by Month per Severity",
+    subtitle = paste("Red dashed line represents the average:", round(average_accidents_month, 2))
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12) # Adjust the angle and size of x-axis labels
+  ) +
+  coord_cartesian(ylim = c(3750, 10000)) # Replace YMIN and YMAX with the desired range
+
+```
+
+Once again, we see that the dangerousness of accidents does not seem to be affected by the month of the year, as fatal accidents are stable (variation of xxx over the months).
+
+### Graph of Proportion of Accidents by M.O.Y per Severity (+ %es)
+
+```{r}
+accidents_by_month_severity <- q2_clean %>%
+  group_by(month_name, accident_severity_chr) %>%
+  summarise(count = n(), .groups = 'drop')
+
+# Calculate the total accidents per day
+total_accidents_by_month <- accidents_by_month_severity %>%
+  group_by(month_name) %>%
+  summarise(total_count = sum(count))
+
+# Join to get the total accidents per day alongside the count per severity
+accidents_by_month_severity <- accidents_by_month_severity %>%
+  left_join(total_accidents_by_month, by = "month_name")
+
+# Calculate the proportion of each severity type per day
+accidents_by_month_severity <- accidents_by_month_severity %>%
+  mutate(proportion = count / total_count)
+
+# Now plot the proportions with data labels
+ggplot(accidents_by_month_severity, aes(x = month_name, y = proportion, fill = accident_severity_chr)) +
+  geom_bar(stat = "identity", position = "fill") +
+  geom_text(aes(label = scales::percent(proportion, accuracy = 0.1)), 
+            position = position_fill(vjust = 0.5), 
+            color = "black", 
+            size = 3) +
+  scale_fill_manual(
+    values = c(Fatal = "#FFEB00",
+               Serious = "#BBBBBB",
+               Slight = "#4C4E4D"),
+    name = "Severity of Accident"
+  ) +
+  labs(
+    x = "Month of Year",
+    y = "Proportion of Accidents",
+    title = "Proportion of Accidents by MOY per Severity (Excluding 'Slight')"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12))
+```
+So there doesn't seem to be a very definite seasonality for accidents in the UK. 
+However, we decided to see if we could detect any variations in terms of the number of accidents per day within the year under analysis. To do this, we have created a graph showing the evolution of the number of accidents over time (without considering whether it's a weekday or a weekend).
+
+
+```{r}
+#Count accidents per month
+q2_clean$date <- as.Date(q2_clean$date)
+
+# Summarize accidents per day
+accidents_per_day <- q2_clean %>%
+  group_by(date) %>%
+  summarise(daily_count = n())
+
+# Extract month from date
+accidents_per_day$month <- month(accidents_per_day$date, label = TRUE)
+
+# Create the boxplot
+ggplot(accidents_per_day, aes(x = month, y = daily_count)) +
+  geom_boxplot() +
+  labs(
+    x = "Month of the Year",
+    y = "Daily Count of Accidents",
+    title = "Boxplot of Daily Accident Counts by Month"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r, echo=FALSE, include=FALSE}
+accidents_count <- q2_clean %>%
+  group_by(month_name) %>%
+  summarise(count = n())
+print(accidents_count)
+```
+
+### Daily Acounts of Accidents (w/ rolling average) --\> Interactive if possible
+
+```{r}
+daily_counts <- q2_clean %>%
+  group_by(date) %>%
+  summarise(count = n())
+
+daily_counts$rolling_avg <- zoo::rollmean(daily_counts$count, k = 7, fill = NA)
+
+# Create the ggplot object
+p <- ggplot(daily_counts) +
+  geom_line(aes(x = date, y = count, color = "Daily Counts"), size = 1) +
+  geom_line(aes(x = date, y = rolling_avg, color = "7-Day Rolling Average"), size = 1.2) +
+  labs(title = "Daily Counts and 7-Day Rolling Average of Accidents",
+       x = "Date", 
+       y = "Number of Accidents") +
+  scale_color_manual(values = c("Daily Counts" = "#4C4E4D", "7-Day Rolling Average" = "#FE4A49")) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(title = "Legend"))
+
+# Convert to an interactive plot with specified sizing
+ggplotly(p, tooltip = c("x", "y", "color")) %>% 
+  layout(autosize = F, width = 800, height = 600)
+```
+
+Here we can more easily see peaks (high or low) within a day, notably on xxx February, xxx June and xxx November (with a peak of over 400 accidents per day). What's more, only 2 days of the year saw fewer than 250 accidents (xxx September and xxx December).
+
+##### Hour of Day
+
+Finally, we have taken into account the hours of the day, so as to be able to identify any times of the day that generate more accidents than others. We observe an increase in the number of accidents between 7am and 8am. There is also a significant increase in the early afternoon between 3pm and 5pm.
+
+### Graph of Accidents by H.O.D per Severity (w/average)
+
+```{r}
+average_accidents_hour <- mean(table(q2_clean$hour))
+ggplot(q2_clean) +
+  aes(x = hour, fill = accident_severity_chr) +
+  geom_bar() +
+  geom_hline(yintercept = average_accidents_hour, linetype = "dashed", color = "#FE4A49", size = 1) +
+  scale_fill_manual(
+     values = c(Fatal = "#FFEB00",
+               Serious = "#BBBBBB",
+               Slight = "#4C4E4D"),
+    name = "Severity of Accident"
+  ) +
+  labs(
+    x = "Hour of the day",
+    y = "Number of Accidents",
+    title = "Accidents by HOD per Severity",
+    subtitle = paste("Red dashed line represents the average:", round(average_accidents_hour, 2))
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+We can also see that there appear to be differences in accident severity depending on the time of day. To help us identify this, we have isolated fatal and serious accidents, keeping our time-of-day scale.
+
+### Graph of Proportion of Accidents by D.O.Y per Severity (w/o slight) (+ %es)
+
+
+
+```{r}
+# Your existing data preparation code
+accidents_by_hour_severity <- q2_clean %>%
+  group_by(hour, accident_severity_chr) %>%
+  summarise(count = n(), .groups = 'drop')
+
+total_accidents_by_hour <- accidents_by_hour_severity %>%
+  group_by(hour) %>%
+  summarise(total_count = sum(count))
+
+accidents_by_hour_severity <- accidents_by_hour_severity %>%
+  left_join(total_accidents_by_hour, by = "hour") %>%
+  mutate(proportion = count / total_count)
+
+# Filter out the "Slight" category and recalculate the proportions
+accidents_by_hour_severity_filtered <- accidents_by_hour_severity %>%
+  filter(accident_severity_chr %in% c("Serious", "Fatal")) %>%
+  group_by(hour) %>%
+  mutate(proportion = count / sum(count))
+
+# Plotting the proportions with data labels
+ggplot(accidents_by_hour_severity_filtered, aes(x = hour, y = proportion, fill = accident_severity_chr)) +
+  geom_bar(stat = "identity", position = "fill") +
+  geom_text(
+    aes(label = scales::percent(proportion, accuracy = 1)), 
+    position = position_fill(vjust = 0.5), 
+    color = "black", 
+    size = 3
+  ) +
+  scale_fill_manual(
+    values = c("Fatal" = "#FFEB00", "Serious" = "#BBBBBB"),
+    name = "Severity of Accident"
+  ) +
+  labs(
+    x = "Hour of Day",
+    y = "Proportion of Accidents",
+    title = "Proportion of Accidents by Hour per Severity (Excluding 'Slight')"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+Here we can see that at night (between midnight and 5 a.m. inclusive) there is a higher proportion of fatal accidents.
+
+We therefore decided to group the hours into classes to try to classify more easily the dangerous hours and the hours that are prone to the greatest number of accidents. To enable us to compare classes, we decided to take classes of equal size in 6-hour blocks.
+
+
+### Table of Accidents by Time Range
+
+```{r}
+# Summarize the number of accidents by time range and severity
+accidents_by_time_severity <- q2_clean %>%
+  group_by(time_ranges, accident_severity_chr) %>%
+  summarise(Number_of_Accidents = n(), .groups = 'drop') %>%
+  ungroup()
+
+# Pivot to wide format
+accidents_wide <- accidents_by_time_severity %>%
+  pivot_wider(names_from = accident_severity_chr, values_from = Number_of_Accidents, values_fill = list(Number_of_Accidents = 0))
+
+# Calculate totals for each time range
+accidents_wide <- accidents_wide %>%
+  mutate(Total = `Fatal` + `Serious` + `Slight`)
+
+# Create a table using knitr
+knitr::kable(accidents_wide, 
+             col.names = c("Time Range", "Fatal", "Serious", "Slight", "Total"), 
+             caption = "Accidents by Time Range and Severity with Totals")
+```
+
+### Graph of Accidents by Time Range per Severity (w/o slight) (+ %es)
+
+```{r}
+# Prepare the dataset
+accidents_by_time_severity <- q2_clean %>%
+  filter(accident_severity_chr != "Slight") %>%
+  group_by(time_ranges, accident_severity_chr) %>%
+  summarise(count = n(), .groups = 'drop')
+
+# Recalculate proportions within each time range group for "Serious" and "Fatal"
+accidents_by_time_severity <- accidents_by_time_severity %>%
+  group_by(time_ranges) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()
+
+# Plot the proportions with data labels
+ggplot(accidents_by_time_severity, aes(x = time_ranges, y = proportion, fill = accident_severity_chr)) +
+  geom_bar(stat = "identity", position = "fill") +
+  geom_text(aes(label = scales::percent(proportion, accuracy = 1)), 
+            position = position_fill(vjust = 0.5), 
+            color = "black", 
+            size = 3) +
+  scale_fill_manual(
+    values = c("Fatal" = "#FFEB00", "Serious" = "#BBBBBB"),
+    name = "Severity of Accident"
+  ) +
+  labs(
+    x = "Time Range",
+    y = "Proportion of Accidents",
+    title = "Proportion of Accidents by Time Range per Severity (Excluding 'Slight')"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+We can see that many accidents take place between midday and 6 p.m. (over 40,000 accidents during these hours as the average is equal to 25’245). What's more, very few accidents (less than 900) take place between midnight and 6am)
+ 
+To complete the picture, we felt it was important to relate these hours to the days of the week, to see if, by pooling these two types of information, we could identify differences depending on the day.
+
+### Heatmap of Accidents by Hour and Day
+
+```{r}
+agg_data <- q2_clean %>%
+  group_by(hour, day_name) %>%
+  summarise(accidents_count = n()) %>%
+  ungroup()
+
+ggplot(agg_data, aes(x = hour, y = day_name, fill = accidents_count)) + 
+  geom_tile() +
+  scale_fill_gradient(low = "#F1F3F2", high = "#FE4A49") +
+  labs(
+    x = "Hour",
+    y = "Day of the Week",
+    fill = "Number of Accidents",
+    title = "Heatmap of Accidents by Hour and Day"
+  ) +
+  theme_minimal() +
+  annotate("rect", xmin = 5, xmax = 19, ymin = "Monday", ymax = "Sunday", 
+           fill = NA, color = "blue", size = 1, linetype = "dashed")  # Add a highlighted box
+```
+
+Thanks to this heatmap, we're able to better dissociate the time of day and the day of the week. Indeed, it confirms our previous observations, but adds, for example, that even if accidents are more frequent between 7 and 8 a.m., this applies mainly to days from Tuesday to Saturday (excluding Sundays and Mondays).
+
+## Research Question 3a:
+
+
+### Graph of Casualty Severity by Gender
+
+```{r}
+ggplot(q3a_clean, aes(x = casualty_severity_chr, fill = factor(sex_of_casualty))) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("#ffeb00", "#4c4e4d"), name = "Gender", labels = c("Male", "Female")) +
+  labs(title = "Casualty Severity by Gender", x = "Severity", y = "Count") +
+  theme_minimal() + 
+    theme(panel.background = element_rect(fill = "#f1f3f2", colour = "#f1f3f2"))
+```
+
+### Graph of Proportion of Casualty Severity by Gender (issue with proportions to be fixed)
+
+```{r}
+# Assuming gender_severity_proportions is already created as per your provided code
+# Now modify the ggplot code for the stacked bar chart
+gender_severity_proportions <- q3a_clean %>%
+  group_by(sex_of_casualty, casualty_severity_chr) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  group_by(sex_of_casualty) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()
+
+
+ggplot(gender_severity_proportions, aes(x = factor(sex_of_casualty), y = proportion, fill = casualty_severity_chr)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(
+    aes(label = scales::percent(proportion, accuracy = 1)), 
+    position = position_stack(vjust = 0.5), 
+    color = "black", 
+    size = 3
+  ) +
+  scale_fill_manual(values = c("Light" = "#FFEB00", "Serious" = "#BBBBBB", "Fatal" = "#4C4E4D"), name = "Severity") +
+  labs(title = "Proportion of Casualty Severity by Gender", x = "Gender", y = "Proportion") +
+  theme_minimal()
+```
+
+### Graph of Age Distribution by Casualty Severity (Stacked Density Report)
+
+```{r}
+ggplot(q3a_clean, aes(x = age_of_casualty, fill = casualty_severity_chr)) +
+  geom_density(alpha = 0.7) +
+  scale_fill_manual(values = c("Fatal" = "#FE4A49", "Serious" = "#bbbbbb", "Light" = "#4c4e4d")) +
+  labs(title = "Age Distribution by Casualty Severity (Stacked Density)", 
+       x = "Age", y = "Density") +
+  theme_minimal()
+```
+
+
+## Research Question 3b:
+
+### Graph of Proportion of Accident Severity with electric vs diesel cars
+
+### Table of CC and severity
+
+## Research Question 4:

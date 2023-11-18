@@ -1,0 +1,72 @@
+/* custom-styles.css */
+
+body {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background-color: #FFFFF;
+  margin: 0;
+  padding: 0;
+}
+
+/* Flex container for h1 and lines */
+.h1-flex-container {
+  display: flex; /* Enable flexbox */
+  justify-content: center; /* Center content horizontally */
+  align-items: center; /* Center content vertically */
+  text-align: center;
+  color: #F1F3F2;
+  background-color: #BBBBBB; /* Solid color for the bar */
+  padding: 20px 0; /* Adjust padding to control bar height */
+}
+
+.title {
+  position: left;
+  background-color: #4C4E4D ;
+  color: #F1F3F2;
+  margin: 0; /* Optional: Adjust if you need space around the h1 */
+}
+
+.subtitle {
+  position: left;
+   background-color: #4C4E4D ;
+  color: #F1F3F2;
+  margin: 0; /* Optional: Adjust if you need space around the h1 */
+}
+
+h1.title-with-lines {
+  position: relative;
+  padding: 10px;
+  margin: 0; /* Optional: Adjust if you need space around the h1 */
+}
+
+h1.main-title-of-project {
+  text-align: center;
+  background-color: #4C4E4D;
+  color:#F1F3F2 ;
+  
+}
+
+h2 {
+  text-align: left;
+  background-color: #F1F3F2;
+
+}
+
+/* Pseudo-elements for yellow lines */
+.h1-flex-container::before, .h1-flex-container::after {
+  content: '';
+  width: 50px; /* Width of the lines */
+  height: 4px; /* Height of the lines */
+  background-color: #FFEB00;
+  color: #F1F3F2;
+  margin: 0 10px; /* Space between lines and text */
+  position: relative; /* Relative positioning */
+  align-self: center; /* Align lines to the center vertically */
+  top: 50%; /* Adjust top value to align lines properly */
+  
+}
+
+
+/* Custom styles for TOC active item */
+.nav .toc .active {
+    color: #FFEB00; /* Replace with your desired color */
+}
